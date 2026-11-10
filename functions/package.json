@@ -1,0 +1,17 @@
+{
+  "name": "pinggram-functions",
+  "description": "Отправка push-уведомлений PingGram при новом сообщении",
+  "main": "index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "deploy": "firebase deploy --only functions"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.0.0",
+    "firebase-functions": "^7.0.0",
+    "google-auth-library": "^11.1.0"
+  },
+  "private": true
+}

@@ -1,0 +1,59 @@
+name: PingGram
+options:
+  bundleIdPrefix: com.rosechat
+  deploymentTarget:
+    iOS: "15.0"
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    from: 11.0.0
+  WebRTC:
+    url: https://github.com/stasel/WebRTC
+    exactVersion: 155.0.0
+targets:
+  PingGram:
+    type: application
+    platform: iOS
+    sources:
+      - iosApp
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: PingGram
+        UILaunchScreen: {}
+        NSPhotoLibraryUsageDescription: "PingGram отправляет выбранные вами фото и видео в чат"
+        NSPhotoLibraryAddUsageDescription: "PingGram сохраняет фото и видео из чата в вашу галерею"
+        NSMicrophoneUsageDescription: "PingGram использует микрофон для голосовых сообщений и звонков"
+        NSCameraUsageDescription: "PingGram снимает видео-кружки для отправки в чат"
+        CADisableMinimumFrameDurationOnPhone: true
+        UIBackgroundModes:
+          - audio
+        TURN_USERNAME: $(TURN_USERNAME)
+        TURN_PASSWORD: $(TURN_PASSWORD)
+        GIF_API_KEY: $(GIF_API_KEY)
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rosechat.shared
+        PRODUCT_NAME: PingGram
+        MARKETING_VERSION: "1.2"
+        CURRENT_PROJECT_VERSION: "3"
+        SWIFT_VERSION: "5.0"
+        FRAMEWORK_SEARCH_PATHS: "$(SRCROOT)/../shared/build/bin/iosArm64/releaseFramework"
+        OTHER_LDFLAGS: "$(inherited) -ObjC"
+        CODE_SIGNING_ALLOWED: "NO"
+        GIF_API_KEY: ""
+        TURN_USERNAME: ""
+        TURN_PASSWORD: ""
+    dependencies:
+      - package: Firebase
+        product: FirebaseCore
+      - package: Firebase
+        product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseFirestore
+      - package: WebRTC
+        product: WebRTC
+      - framework: ../shared/build/bin/iosArm64/releaseFramework/Shared.framework
+        embed: false
