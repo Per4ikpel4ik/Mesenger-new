@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.rosechat.shared.model.SCallStatus
+import com.rosechat.shared.model.SCallType
 import com.rosechat.shared.model.SharedCall
 import com.rosechat.shared.model.tsSeconds
 import kotlinx.coroutines.CancellationException
@@ -34,7 +35,7 @@ object CallCenter {
 
 // Логика звонка — тот же обмен через Firestore, что и у Android (коллекция calls:
 // offerSdp/answerSdp в документе, кандидаты в подколлекциях callerCandidates/calleeCandidates).
-// Пока только голос; видео добавим следующим этапом.
+// Голос и видео (тип звонка хранится в поле type документа, как у Android).
 class CallController(private val engine: CallEngine) : CallEngineListener {
     var phase by mutableStateOf(CallPhase.IDLE)
         private set
@@ -49,6 +50,10 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
     var speakerOn by mutableStateOf(false)
         private set
     var message by mutableStateOf<String?>(null)
+        private set
+    var isVideo by mutableStateOf(false)
+        private set
+    var cameraOff by mutableStateOf(false)
         private set
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -67,20 +72,24 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
     fun startOutgoing(
         meUid: String, meName: String, mePhotoUrl: String, mePhotoData: String,
         peerUid: String, peerName: String, peerPhoto: String,
+        video: Boolean = false,
     ) {
         if (phase != CallPhase.IDLE) return
         resetState()
+        isVideo = video
+        speakerOn = video
         this.peerName = peerName
         this.peerPhoto = peerPhoto
         isCaller = true
         phase = CallPhase.DIALING
         scope.launch {
             try {
-                val id = SharedRepo.startCall(meUid, meName, mePhotoUrl, mePhotoData, peerUid, "AUDIO")
+                val id = SharedRepo.startCall(meUid, meName, mePhotoUrl, mePhotoData, peerUid, if (video) "VIDEO" else "AUDIO")
                 callId = id
                 handledIds.add(id)
                 observe(id)
-                engine.startCall(false, localSetting("TURN_USERNAME"), localSetting("TURN_PASSWORD"))
+                engine.startCall(video, localSetting("TURN_USERNAME"), localSetting("TURN_PASSWORD"))
+                if (video) engine.speaker(true)
                 engine.makeOffer()
                 // Если за 45 секунд никто не ответил — звонок пропущенный.
                 timeoutJob?.cancel()
@@ -101,6 +110,8 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
         if (phase != CallPhase.IDLE) return
         if (!handledIds.add(call.id)) return
         resetState()
+        isVideo = call.data.type == SCallType.VIDEO
+        speakerOn = isVideo
         callId = call.id
         isCaller = false
         peerName = name
@@ -127,7 +138,8 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
                     SharedRepo.observeCall(id).filterNotNull().first { it.data.offerSdp.isNotEmpty() }
                 }
                 if (c == null) { fail("Звонящий не отправил данные звонка"); return@launch }
-                engine.startCall(false, localSetting("TURN_USERNAME"), localSetting("TURN_PASSWORD"))
+                engine.startCall(isVideo, localSetting("TURN_USERNAME"), localSetting("TURN_PASSWORD"))
+                if (isVideo) engine.speaker(true)
                 engine.acceptOffer(c.data.offerSdp)
                 startConnectTimeout()
             } catch (e: CancellationException) {
@@ -153,6 +165,8 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
 
     fun toggleMute() { muted = !muted; engine.mute(muted) }
     fun toggleSpeaker() { speakerOn = !speakerOn; engine.speaker(speakerOn) }
+    fun toggleCamera() { cameraOff = !cameraOff; engine.setCameraOff(cameraOff) }
+    fun switchCamera() { engine.switchCamera() }
 
     // ── Слежение за документом звонка ──
     private fun observe(id: String) {
@@ -275,6 +289,8 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
         seconds = 0
         muted = false
         speakerOn = false
+        isVideo = false
+        cameraOff = false
         message = null
         answerApplied = false
         callId = null

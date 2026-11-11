@@ -1,14 +1,39 @@
 import Foundation
 import AVFoundation
+import CoreMedia
+import UIKit
 import WebRTC
 import Shared
 
-// Нативный движок голосового звонка. Общий код (CallController) управляет им через
+// Нативный движок голосового и видеозвонка. Общий код (CallController) управляет им через
 // протокол CallEngine; все колбэки в Kotlin отправляются на главном потоке.
-final class WebRTCCallEngine: NSObject, CallEngine, RTCPeerConnectionDelegate {
+final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConnectionDelegate {
     private let factory = WebRTCBootstrap.factory
     private var pc: RTCPeerConnection?
     private var audioTrack: RTCAudioTrack?
+    private var videoSource: RTCVideoSource?
+    private var capturer: RTCCameraVideoCapturer?
+    private var localVideoTrack: RTCVideoTrack?
+    private var remoteVideoTrack: RTCVideoTrack?
+    private var usingFront = true
+    private var wantVideo = false
+
+    // Эти view отдаются Compose (UIKitView). Создаются один раз и живут весь запуск приложения.
+    private lazy var localVideo: RTCMTLVideoView = makeVideoView(mirror: true)
+    private lazy var remoteVideo: RTCMTLVideoView = makeVideoView(mirror: false)
+
+    private func makeVideoView(mirror: Bool) -> RTCMTLVideoView {
+        let v = RTCMTLVideoView(frame: .zero)
+        v.videoContentMode = .scaleAspectFill
+        v.backgroundColor = .black
+        v.clipsToBounds = true
+        if mirror { v.transform = CGAffineTransform(scaleX: -1, y: 1) }
+        return v
+    }
+
+    // MARK: - CallVideoViews
+    func localView() -> UIView { localVideo }
+    func remoteView() -> UIView { remoteVideo }
     private var listener: CallEngineListener?
     private var pendingCandidates: [RTCIceCandidate] = []
     private var remoteDescriptionSet = false
@@ -21,6 +46,7 @@ final class WebRTCCallEngine: NSObject, CallEngine, RTCPeerConnectionDelegate {
 
     func startCall(isVideo: Bool, turnUsername: String, turnPassword: String) {
         closeConnection()
+        wantVideo = isVideo
 
         AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
             if !granted {
@@ -63,12 +89,14 @@ final class WebRTCCallEngine: NSObject, CallEngine, RTCPeerConnectionDelegate {
         let track = factory.audioTrack(with: audioSource, trackId: "audio0")
         audioTrack = track
         conn.add(track, streamIds: ["stream0"])
+
+        if isVideo { startLocalVideo(on: conn) }
     }
 
     func makeOffer() {
         guard let conn = pc else { return }
         let constraints = RTCMediaConstraints(
-            mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "false"],
+            mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": wantVideo ? "true" : "false"],
             optionalConstraints: nil
         )
         conn.offer(for: constraints) { [weak self] sdp, error in
@@ -92,7 +120,7 @@ final class WebRTCCallEngine: NSObject, CallEngine, RTCPeerConnectionDelegate {
                 self.flushPendingCandidates()
             }
             let constraints = RTCMediaConstraints(
-                mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "false"],
+                mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": wantVideo ? "true" : "false"],
                 optionalConstraints: nil
             )
             conn.answer(for: constraints) { answer, err in
@@ -135,11 +163,79 @@ final class WebRTCCallEngine: NSObject, CallEngine, RTCPeerConnectionDelegate {
         try? AVAudioSession.sharedInstance().overrideOutputAudioPort(on ? .speaker : .none)
     }
 
+    func setCameraOff(off: Bool) {
+        localVideoTrack?.isEnabled = !off
+    }
+
+    func switchCamera() {
+        guard let cap = capturer else { return }
+        usingFront.toggle()
+        let front = usingFront
+        cap.stopCapture { [weak self] in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.localVideo.transform = front ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+                self.beginCapture(front: front)
+            }
+        }
+    }
+
     func stopCall() {
         closeConnection()
     }
 
     // MARK: - Внутреннее
+
+    private func startLocalVideo(on conn: RTCPeerConnection) {
+        let source = factory.videoSource()
+        videoSource = source
+        let track = factory.videoTrack(with: source, trackId: "video0")
+        localVideoTrack = track
+        track.add(localVideo)
+        conn.add(track, streamIds: ["stream0"])
+        capturer = RTCCameraVideoCapturer(delegate: source)
+        usingFront = true
+        localVideo.transform = CGAffineTransform(scaleX: -1, y: 1)
+        AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if granted {
+                    self.beginCapture(front: true)
+                } else {
+                    self.listener?.onError(message: "Нет доступа к камере. Разрешите её в настройках iPhone.")
+                }
+            }
+        }
+    }
+
+    private func beginCapture(front: Bool) {
+        guard let cap = capturer else { return }
+        let position: AVCaptureDevice.Position = front ? .front : .back
+        let devices = RTCCameraVideoCapturer.captureDevices()
+        guard let device = devices.first(where: { $0.position == position }) ?? devices.first else {
+            report("Камера не найдена")
+            return
+        }
+        let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
+        // Берём формат, ближайший к 640 px по ширине: хватает для звонка и не греет телефон.
+        func width(_ f: AVCaptureDevice.Format) -> Int32 { CMVideoFormatDescriptionGetDimensions(f.formatDescription).width }
+        guard let format = formats.min(by: { abs(width($0) - 640) < abs(width($1) - 640) }) else {
+            report("Камера не поддерживает нужный формат")
+            return
+        }
+        let maxFps = format.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 30
+        cap.startCapture(with: device, format: format, fps: Int(min(maxFps, 30)))
+    }
+
+    private func attachRemote(_ track: RTCMediaStreamTrack?) {
+        guard let v = track as? RTCVideoTrack else { return }
+        DispatchQueue.main.async {
+            if self.remoteVideoTrack === v { return }
+            self.remoteVideoTrack?.remove(self.remoteVideo)
+            self.remoteVideoTrack = v
+            v.add(self.remoteVideo)
+        }
+    }
 
     private func flushPendingCandidates() {
         guard let conn = pc else { return }
@@ -149,6 +245,13 @@ final class WebRTCCallEngine: NSObject, CallEngine, RTCPeerConnectionDelegate {
 
     private func closeConnection() {
         audioTrack?.isEnabled = false
+        capturer?.stopCapture()
+        localVideoTrack?.remove(localVideo)
+        remoteVideoTrack?.remove(remoteVideo)
+        localVideoTrack = nil
+        remoteVideoTrack = nil
+        capturer = nil
+        videoSource = nil
         pc?.close()
         pc = nil
         audioTrack = nil
@@ -166,6 +269,14 @@ final class WebRTCCallEngine: NSObject, CallEngine, RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd rtpReceiver: RTCRtpReceiver, streams mediaStreams: [RTCMediaStream]) {
+        attachRemote(rtpReceiver.track)
+    }
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {
+        attachRemote(transceiver.receiver.track)
+    }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
 

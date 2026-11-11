@@ -166,6 +166,9 @@ import com.rosechat.shared.model.SharedCall
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
+import com.rosechat.shared.data.CallVideoSurface
+import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -2985,6 +2988,13 @@ private fun ChatScreen(chatId: String, title: String, photoUrl: String, onClose:
                         val ctrl = CallCenter.controller
                         val uid = myUid
                         if (ctrl != null && uid != null) {
+                            ctrl.startOutgoing(uid, me?.displayName ?: "", me?.photoUrl ?: "", "", partnerUid, title, photoUrl, video = true)
+                        }
+                    }) { Icon(Icons.Default.Videocam, "Видеозвонок", tint = Accent) }
+                    IconButton(onClick = {
+                        val ctrl = CallCenter.controller
+                        val uid = myUid
+                        if (ctrl != null && uid != null) {
                             ctrl.startOutgoing(uid, me?.displayName ?: "", me?.photoUrl ?: "", "", partnerUid, title, photoUrl)
                         }
                     }) { Icon(Icons.Default.Call, "Позвонить", tint = Accent) }
@@ -3688,23 +3698,27 @@ private fun CallHost(compact: Boolean) {
 @Composable
 private fun CallOverlay(controller: CallController, compact: Boolean) {
     val phase = controller.phase
+    val showVideo = controller.isVideo && (phase == CallPhase.ACTIVE || phase == CallPhase.CONNECTING)
     Box(Modifier.fillMaxSize().background(BgPrimary).pointerInput(Unit) { detectTapGestures { } }) {
-        SafeArea(enabled = compact, topColor = BgPrimary) {
+        if (showVideo) CallVideoSurface(remote = true, modifier = Modifier.fillMaxSize())
+        SafeArea(enabled = compact, topColor = if (showVideo) Color.Transparent else BgPrimary) {
             Column(
                 Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Spacer(Modifier.height(48.dp))
-                Avatar(photoUrl = controller.peerPhoto, label = controller.peerName.ifBlank { "?" }, size = 120.dp)
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(if (showVideo) 8.dp else 48.dp))
+                if (!showVideo) {
+                    Avatar(photoUrl = controller.peerPhoto, label = controller.peerName.ifBlank { "?" }, size = 120.dp)
+                    Spacer(Modifier.height(20.dp))
+                }
                 Text(
-                    controller.peerName.ifBlank { "Пользователь" }, color = TextPrimary, fontSize = 26.sp,
+                    controller.peerName.ifBlank { "Пользователь" }, color = if (showVideo) Color.White else TextPrimary, fontSize = if (showVideo) 20.sp else 26.sp,
                     fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(8.dp))
                 val status = when (phase) {
                     CallPhase.DIALING -> "Вызываем…"
-                    CallPhase.INCOMING -> "Входящий звонок"
+                    CallPhase.INCOMING -> if (controller.isVideo) "Входящий видеозвонок" else "Входящий звонок"
                     CallPhase.CONNECTING -> "Соединение…"
                     CallPhase.ACTIVE -> {
                         val m = controller.seconds / 60
@@ -3714,7 +3728,7 @@ private fun CallOverlay(controller: CallController, compact: Boolean) {
                     CallPhase.ENDED -> controller.message ?: "Звонок завершён"
                     CallPhase.IDLE -> ""
                 }
-                Text(status, color = if (phase == CallPhase.ENDED && controller.message != null) DangerColor else TextSecondary, fontSize = 16.sp, textAlign = TextAlign.Center)
+                Text(status, color = if (phase == CallPhase.ENDED && controller.message != null) DangerColor else if (showVideo) Color.White else TextSecondary, fontSize = 16.sp, textAlign = TextAlign.Center)
 
                 Spacer(Modifier.weight(1f))
 
@@ -3730,16 +3744,32 @@ private fun CallOverlay(controller: CallController, compact: Boolean) {
                             if (controller.muted) "Включить микрофон" else "Микрофон",
                             if (controller.muted) Accent else BgSecondary,
                         ) { controller.toggleMute() }
+                        if (controller.isVideo) {
+                            CallRoundButton(
+                                if (controller.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam,
+                                if (controller.cameraOff) "Включить камеру" else "Камера",
+                                if (controller.cameraOff) Accent else BgSecondary,
+                            ) { controller.toggleCamera() }
+                            CallRoundButton(Icons.Default.Cameraswitch, "Перевернуть", BgSecondary) { controller.switchCamera() }
+                        }
                         CallRoundButton(Icons.Default.CallEnd, "Завершить", DangerColor) { controller.hangUp() }
-                        CallRoundButton(
-                            if (controller.speakerOn) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                            "Динамик",
-                            if (controller.speakerOn) Accent else BgSecondary,
-                        ) { controller.toggleSpeaker() }
+                        if (!controller.isVideo) {
+                            CallRoundButton(
+                                if (controller.speakerOn) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                                "Динамик",
+                                if (controller.speakerOn) Accent else BgSecondary,
+                            ) { controller.toggleSpeaker() }
+                        }
                     }
                 }
                 Spacer(Modifier.height(24.dp))
             }
+        }
+        if (showVideo && !controller.cameraOff) {
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(top = 72.dp, end = 16.dp)
+                    .size(width = 104.dp, height = 144.dp).clip(RoundedCornerShape(14.dp)),
+            ) { CallVideoSurface(remote = false, modifier = Modifier.fillMaxSize()) }
         }
     }
 }

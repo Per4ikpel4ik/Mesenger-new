@@ -24,7 +24,7 @@ targets:
         NSPhotoLibraryUsageDescription: "PingGram отправляет выбранные вами фото и видео в чат"
         NSPhotoLibraryAddUsageDescription: "PingGram сохраняет фото и видео из чата в вашу галерею"
         NSMicrophoneUsageDescription: "PingGram использует микрофон для голосовых сообщений и звонков"
-        NSCameraUsageDescription: "PingGram снимает видео-кружки для отправки в чат"
+        NSCameraUsageDescription: "PingGram использует камеру для видеозвонков и видео-кружков"
         CADisableMinimumFrameDurationOnPhone: true
         UIBackgroundModes:
           - audio

@@ -19,6 +19,8 @@ interface CallEngine {
     fun addCandidate(sdpMid: String, sdpMLineIndex: Int, candidate: String)
     fun mute(muted: Boolean)
     fun speaker(on: Boolean)
+    fun setCameraOff(off: Boolean)
+    fun switchCamera()
     fun stopCall()
 }
 
