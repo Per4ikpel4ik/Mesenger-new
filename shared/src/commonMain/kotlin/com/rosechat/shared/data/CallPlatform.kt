@@ -8,6 +8,7 @@ interface CallEngineListener {
     fun onLocalCandidate(sdpMid: String, sdpMLineIndex: Int, candidate: String)
     fun onConnectionState(state: String)                                        // CONNECTED, COMPLETED, FAILED, DISCONNECTED, CLOSED, ...
     fun onError(message: String)
+    fun onRemoteVideo(active: Boolean)                                          // пришёл первый кадр видео собеседника
 }
 
 interface CallEngine {

@@ -7,6 +7,41 @@ import Shared
 
 // Нативный движок голосового и видеозвонка. Общий код (CallController) управляет им через
 // протокол CallEngine; все колбэки в Kotlin отправляются на главном потоке.
+// Контейнер для видео: отражение (зеркало своей камеры) вешаем на внутренний view и размер
+// задаём через bounds/center, иначе Compose, меняя frame у отражённого view, его ломает.
+final class VideoContainer: UIView {
+    let inner = RTCMTLVideoView(frame: .zero)
+
+    init(mirror: Bool) {
+        super.init(frame: .zero)
+        backgroundColor = .black
+        clipsToBounds = true
+        inner.videoContentMode = .scaleAspectFill
+        addSubview(inner)
+        setMirrored(mirror)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setMirrored(_ mirrored: Bool) {
+        inner.transform = mirrored ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        inner.bounds = CGRect(origin: .zero, size: bounds.size)
+        inner.center = CGPoint(x: bounds.midX, y: bounds.midY)
+    }
+}
+
+// Сообщает, что от собеседника пошли кадры видео.
+final class FrameWatcher: NSObject, RTCVideoViewDelegate {
+    var onFrame: (() -> Void)?
+    func videoView(_ videoView: RTCVideoRenderer, didChangeVideoSize size: CGSize) {
+        if size.width > 0 { onFrame?() }
+    }
+}
+
 final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConnectionDelegate {
     private let factory = WebRTCBootstrap.factory
     private var pc: RTCPeerConnection?
@@ -19,17 +54,9 @@ final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConne
     private var wantVideo = false
 
     // Эти view отдаются Compose (UIKitView). Создаются один раз и живут весь запуск приложения.
-    private lazy var localVideo: RTCMTLVideoView = makeVideoView(mirror: true)
-    private lazy var remoteVideo: RTCMTLVideoView = makeVideoView(mirror: false)
-
-    private func makeVideoView(mirror: Bool) -> RTCMTLVideoView {
-        let v = RTCMTLVideoView(frame: .zero)
-        v.videoContentMode = .scaleAspectFill
-        v.backgroundColor = .black
-        v.clipsToBounds = true
-        if mirror { v.transform = CGAffineTransform(scaleX: -1, y: 1) }
-        return v
-    }
+    private lazy var localVideo = VideoContainer(mirror: true)
+    private lazy var remoteVideo = VideoContainer(mirror: false)
+    private let frameWatcher = FrameWatcher()
 
     // MARK: - CallVideoViews
     func localView() -> UIView { localVideo }
@@ -42,6 +69,10 @@ final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConne
 
     func attach(listener: CallEngineListener) {
         self.listener = listener
+        frameWatcher.onFrame = { [weak self] in
+            DispatchQueue.main.async { self?.listener?.onRemoteVideo(active: true) }
+        }
+        remoteVideo.inner.delegate = frameWatcher
     }
 
     func startCall(isVideo: Bool, turnUsername: String, turnPassword: String) {
@@ -118,6 +149,7 @@ final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConne
             DispatchQueue.main.async {
                 self.remoteDescriptionSet = true
                 self.flushPendingCandidates()
+                self.syncRemoteVideo()
             }
             let constraints = RTCMediaConstraints(
                 mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": wantVideo ? "true" : "false"],
@@ -142,6 +174,7 @@ final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConne
             DispatchQueue.main.async {
                 self.remoteDescriptionSet = true
                 self.flushPendingCandidates()
+                self.syncRemoteVideo()
             }
         }
     }
@@ -174,7 +207,7 @@ final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConne
         cap.stopCapture { [weak self] in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.localVideo.transform = front ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+                self.localVideo.setMirrored(front)
                 self.beginCapture(front: front)
             }
         }
@@ -191,11 +224,11 @@ final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConne
         videoSource = source
         let track = factory.videoTrack(with: source, trackId: "video0")
         localVideoTrack = track
-        track.add(localVideo)
+        track.add(localVideo.inner)
         conn.add(track, streamIds: ["stream0"])
         capturer = RTCCameraVideoCapturer(delegate: source)
         usingFront = true
-        localVideo.transform = CGAffineTransform(scaleX: -1, y: 1)
+        localVideo.setMirrored(true)
         AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -231,9 +264,18 @@ final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConne
         guard let v = track as? RTCVideoTrack else { return }
         DispatchQueue.main.async {
             if self.remoteVideoTrack === v { return }
-            self.remoteVideoTrack?.remove(self.remoteVideo)
+            self.remoteVideoTrack?.remove(self.remoteVideo.inner)
             self.remoteVideoTrack = v
-            v.add(self.remoteVideo)
+            v.add(self.remoteVideo.inner)
+        }
+    }
+
+    // В Unified Plan у звонящего трансивер создан заранее, и колбэк «трек пришёл» может не прийти:
+    // после установки remote description сами берём видеотрек из трансиверов.
+    private func syncRemoteVideo() {
+        guard let conn = pc else { return }
+        for t in conn.transceivers where t.mediaType == .video {
+            attachRemote(t.receiver.track)
         }
     }
 
@@ -246,8 +288,8 @@ final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConne
     private func closeConnection() {
         audioTrack?.isEnabled = false
         capturer?.stopCapture()
-        localVideoTrack?.remove(localVideo)
-        remoteVideoTrack?.remove(remoteVideo)
+        localVideoTrack?.remove(localVideo.inner)
+        remoteVideoTrack?.remove(remoteVideo.inner)
         localVideoTrack = nil
         remoteVideoTrack = nil
         capturer = nil
@@ -292,7 +334,10 @@ final class WebRTCCallEngine: NSObject, CallEngine, CallVideoViews, RTCPeerConne
         case .closed: name = "CLOSED"
         default: name = "OTHER"
         }
-        DispatchQueue.main.async { self.listener?.onConnectionState(state: name) }
+        DispatchQueue.main.async {
+            if newState == .connected || newState == .completed { self.syncRemoteVideo() }
+            self.listener?.onConnectionState(state: name)
+        }
     }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}

@@ -3701,7 +3701,7 @@ private fun CallOverlay(controller: CallController, compact: Boolean) {
     val showVideo = controller.isVideo && (phase == CallPhase.ACTIVE || phase == CallPhase.CONNECTING)
     Box(Modifier.fillMaxSize().background(BgPrimary).pointerInput(Unit) { detectTapGestures { } }) {
         if (showVideo) CallVideoSurface(remote = true, modifier = Modifier.fillMaxSize())
-        SafeArea(enabled = compact, topColor = if (showVideo) Color.Transparent else BgPrimary) {
+        CallSafeArea(transparent = showVideo, compact = compact) {
             Column(
                 Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -3765,12 +3765,25 @@ private fun CallOverlay(controller: CallController, compact: Boolean) {
                 Spacer(Modifier.height(24.dp))
             }
         }
+        if (showVideo && phase == CallPhase.ACTIVE && !controller.remoteVideoReady) {
+            Text("Ждём видео собеседника…", color = Color.White, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
+        }
         if (showVideo && !controller.cameraOff) {
             Box(
-                Modifier.align(Alignment.TopEnd).padding(top = 72.dp, end = 16.dp)
+                Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.safeDrawing).padding(top = 8.dp, end = 16.dp)
                     .size(width = 104.dp, height = 144.dp).clip(RoundedCornerShape(14.dp)),
             ) { CallVideoSurface(remote = false, modifier = Modifier.fillMaxSize()) }
         }
+    }
+}
+
+// Для видеозвонка нельзя красить экран фоном (SafeArea закрыла бы видео), поэтому там только отступы.
+@Composable
+private fun CallSafeArea(transparent: Boolean, compact: Boolean, content: @Composable () -> Unit) {
+    if (transparent) {
+        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) { content() }
+    } else {
+        SafeArea(enabled = compact, topColor = BgPrimary, content = content)
     }
 }
 

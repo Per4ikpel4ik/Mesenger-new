@@ -55,6 +55,8 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
         private set
     var cameraOff by mutableStateOf(false)
         private set
+    var remoteVideoReady by mutableStateOf(false)
+        private set
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var callId: String? = null
@@ -264,6 +266,8 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
 
     override fun onError(message: String) { fail(message) }
 
+    override fun onRemoteVideo(active: Boolean) { remoteVideoReady = active }
+
     // ── Завершение ──
     private fun fail(reason: String) {
         val id = callId
@@ -291,6 +295,7 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
         speakerOn = false
         isVideo = false
         cameraOff = false
+        remoteVideoReady = false
         message = null
         answerApplied = false
         callId = null
