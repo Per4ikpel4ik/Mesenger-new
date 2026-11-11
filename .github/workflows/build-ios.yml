@@ -24,6 +24,11 @@ jobs:
 
       - name: Make gradlew executable
         run: chmod +x gradlew
+      - name: Give Gradle more memory
+        run: |
+          sed -i '' '/org.gradle.jvmargs/d' gradle.properties
+          printf '\norg.gradle.jvmargs=-Xmx5g -Dfile.encoding=UTF-8\nkotlin.native.jvmArgs=-Xmx5g\nkotlin.apple.xcodeCompatibility.nowarn=true\n' >> gradle.properties
+          cat gradle.properties
 
       - name: Build Kotlin framework (iPhone)
         run: ./gradlew :shared:linkReleaseFrameworkIosArm64 --stacktrace
