@@ -441,6 +441,11 @@ fun App() {
                 if (SharedRepo.currentUid != null) screen = Screen.Main
             }
 
+            // Небольшой салют, когда открывается главный экран.
+            LaunchedEffect(screen is Screen.Main) {
+                if (screen is Screen.Main) { delay(700); Fireworks.launch() }
+            }
+
             Surface(modifier = Modifier.fillMaxSize(), color = BgPrimary) {
                 // Узкий экран (телефон) — отдельная раскладка в стиле Android-приложения;
                 // широкий (Windows) — прежняя с боковой полосой и двумя панелями.
@@ -460,6 +465,7 @@ fun App() {
                         )
                     }
                     if (screen is Screen.Main) CallHost(compact)
+                    FireworksOverlay()
                 }
             }
         }
@@ -2787,7 +2793,20 @@ private fun ChatScreen(chatId: String, title: String, photoUrl: String, onClose:
     var viewerImage by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
 
     LaunchedEffect(chatId) { SharedRepo.observeChat(chatId).collect { chat = it } }
-    LaunchedEffect(chatId) { SharedRepo.observeMessages(chatId).collect { messages = it } }
+    LaunchedEffect(chatId) {
+        var firstLoad = true
+        var lastId: String? = null
+        SharedRepo.observeMessages(chatId).collect { list ->
+            messages = list
+            val newest = list.lastOrNull()
+            // Салют, когда собеседник прислал праздничное сообщение (🎆 🎉 …) уже при открытом чате.
+            if (!firstLoad && newest != null && newest.id != lastId && newest.data.senderId != myUid &&
+                newest.data.type == SMessageType.TEXT && Fireworks.isCelebration(newest.data.text)
+            ) Fireworks.launch(big = true)
+            firstLoad = false
+            lastId = newest?.id
+        }
+    }
     LaunchedEffect(myUid) { if (myUid != null) SharedRepo.observeUser(myUid).collect { me = it } }
 
     val c = chat
@@ -2918,6 +2937,7 @@ private fun ChatScreen(chatId: String, title: String, photoUrl: String, onClose:
                 try {
                     val name = SharedRepo.getUser(myUid)?.data?.displayName ?: ""
                     SharedRepo.sendText(chatId, text, myUid, name)
+                    if (Fireworks.isCelebration(text)) Fireworks.launch(big = true)
                 } catch (e: Exception) { error = e.message ?: "Не удалось отправить" }
             }
         }

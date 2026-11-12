@@ -37,8 +37,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rosechat.shared
         PRODUCT_NAME: PingGram
-        MARKETING_VERSION: "1.2"
-        CURRENT_PROJECT_VERSION: "3"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: "1.3"
+        CURRENT_PROJECT_VERSION: "4"
         SWIFT_VERSION: "5.0"
         FRAMEWORK_SEARCH_PATHS: "$(SRCROOT)/../shared/build/bin/iosArm64/releaseFramework"
         OTHER_LDFLAGS: "$(inherited) -ObjC"
