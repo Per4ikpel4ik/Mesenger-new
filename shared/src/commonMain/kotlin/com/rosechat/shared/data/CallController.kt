@@ -3,7 +3,6 @@ package com.rosechat.shared.data
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.rosechat.shared.Fireworks
 import com.rosechat.shared.model.SCallStatus
 import com.rosechat.shared.model.SCallType
 import com.rosechat.shared.model.SharedCall
@@ -258,7 +257,6 @@ class CallController(private val engine: CallEngine) : CallEngineListener {
             "CONNECTED", "COMPLETED" -> if (phase != CallPhase.ACTIVE) {
                 timeoutJob?.cancel()
                 phase = CallPhase.ACTIVE
-                Fireworks.launch()
                 timerJob?.cancel()
                 timerJob = scope.launch { while (true) { delay(1000); seconds++ } }
             }

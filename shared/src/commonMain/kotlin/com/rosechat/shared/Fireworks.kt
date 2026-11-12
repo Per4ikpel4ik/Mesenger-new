@@ -1,6 +1,9 @@
 package com.rosechat.shared
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -9,13 +12,24 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material3.Text
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.sp
+import com.rosechat.shared.data.loadStringPref
+import com.rosechat.shared.data.localDateParts
+import com.rosechat.shared.data.saveStringPref
+import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -34,10 +48,41 @@ object Fireworks {
         request++
     }
 
-    private val triggers = listOf("🎆", "🎇", "🎉", "🎊", "🥳")
+    // Надпись по центру экрана (null — не показываем).
+    var greeting by mutableStateOf<String?>(null)
+        internal set
+    var newYearRequest by mutableStateOf(0)
+        private set
+    var greetingYear = 0
+        private set
 
-    // Сообщение «праздничное» — тогда при отправке и получении запускается большой салют.
-    fun isCelebration(text: String): Boolean = triggers.any { text.contains(it) }
+    // Новогодний салют с надписью «С Новым годом!» на несколько секунд.
+    fun launchNewYear(year: Int) {
+        greetingYear = year
+        newYearRequest++
+    }
+}
+
+// Следит за временем: салют начинается сразу после полуночи на 1 января и показывается один раз за год.
+// Если приложение откроют уже 1 января, а салют ещё не показывали, он запустится при открытии.
+@Composable
+fun NewYearWatcher() {
+    LaunchedEffect(Unit) {
+        while (true) {
+            val t = localDateParts()
+            val year = t[0]
+            if (t[1] == 1 && t[2] == 1) {
+                val key = "newyear_shown_$year"
+                if (loadStringPref(key, "") != "1") {
+                    saveStringPref(key, "1")
+                    delay(1200)
+                    Fireworks.launchNewYear(year)
+                }
+            }
+            val nearMidnight = t[1] == 12 && t[2] == 31 && t[3] == 23 && t[4] >= 58
+            delay(if (nearMidnight) 500L else 20_000L)
+        }
+    }
 }
 
 private class Rocket(var x: Float, var y: Float, val tx: Float, val ty: Float, var vy: Float, val color: Color, var wait: Float)
@@ -63,6 +108,17 @@ fun FireworksOverlay(modifier: Modifier = Modifier) {
     var frame by remember { mutableStateOf(0L) }
     var area by remember { mutableStateOf(IntSize.Zero) }
     val request = Fireworks.request
+
+    LaunchedEffect(Fireworks.newYearRequest) {
+        if (Fireworks.newYearRequest == 0) return@LaunchedEffect
+        Fireworks.greeting = "С Новым годом!\n" + Fireworks.greetingYear
+        repeat(5) {
+            Fireworks.launch(big = true)
+            delay(2200)
+        }
+        delay(3000)
+        Fireworks.greeting = null
+    }
 
     LaunchedEffect(request) {
         if (request == 0 || area.width == 0 || area.height == 0) return@LaunchedEffect
@@ -130,7 +186,10 @@ fun FireworksOverlay(modifier: Modifier = Modifier) {
         }
     }
 
-    Canvas(modifier.fillMaxSize().onSizeChanged { area = it }) {
+    val greeting = Fireworks.greeting
+    val greetingAlpha by animateFloatAsState(if (greeting != null) 1f else 0f, tween(700))
+    Box(modifier.fillMaxSize()) {
+    Canvas(Modifier.fillMaxSize().onSizeChanged { area = it }) {
         @Suppress("UNUSED_VARIABLE")
         val tick = frame
         for (r in rockets) {
@@ -141,5 +200,17 @@ fun FireworksOverlay(modifier: Modifier = Modifier) {
             val a = s.life.coerceIn(0f, 1f)
             drawLine(s.color.copy(alpha = a), Offset(s.px, s.py), Offset(s.x, s.y), strokeWidth = s.size * (0.6f + 0.6f * a), cap = StrokeCap.Round)
         }
+    }
+    if (greeting != null) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                greeting,
+                style = TextStyle(
+                    fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFFD66B).copy(alpha = greetingAlpha),
+                    textAlign = TextAlign.Center, shadow = Shadow(Color(0xCC000000), Offset(0f, 3f), 12f),
+                ),
+            )
+        }
+    }
     }
 }
